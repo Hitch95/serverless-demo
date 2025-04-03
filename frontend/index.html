@@ -1,1 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Lambda LocalStack Demo</title>
+</head>
+<body>
+  <h1>Lambda Test</h1>
+  <button onclick="callHello()">GET /hello</button>
+  <pre id="hello-response"></pre>
 
+  <h2>Contact</h2>
+  <form id="contactForm">
+    <input name="name" placeholder="Your name"><br>
+    <input name="email" placeholder="Your email"><br>
+    <textarea name="message" placeholder="Your message"></textarea><br>
+    <button type="submit">Send</button>
+  </form>
+  <pre id="contact-response"></pre>
+
+  <script>
+    async function callHello() {
+      const res = await fetch("http://ip10-0-6-4-cvn3an3hp11h42sqv29g-4566.direct.lab-boris.fr/restapis/j3zage4qaz/dev/_user_request_/hello");
+      document.getElementById("hello-response").innerText = await res.text();
+    }
+
+    document.getElementById("contactForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const form = new FormData(e.target);
+      const data = Object.fromEntries(form.entries());
+      const res = await fetch("http://ip10-0-6-4-cvn3an3hp11h42sqv29g-4566.direct.lab-boris.fr/restapis/j3zage4qaz/dev/_user_request_/contact", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(data)
+      });
+      document.getElementById("contact-response").innerText = await res.text();
+    });
+  </script>
+</body>
+</html>
