@@ -9,10 +9,10 @@ def handler(event, context):
     table_name = os.environ.get("TABLE_NAME")
     endpoint_url = os.environ.get("ENDPOINT_URL")
 
-    if not table_name:
+    if not table_name or not endpoint_url:
         return {
             "statusCode": 500,
-            "body": json.dumps({"error": "TABLE_NAME not set"})
+            "body": json.dumps({"error": "Environment variables not configured"})
         }
 
     dynamodb = boto3.resource(
@@ -40,7 +40,7 @@ def handler(event, context):
     elif route == "/contact" and method == "POST":
         body = json.loads(event.get("body", "{}"))
         item = {
-            "id": str(uuid.uuid4()),  
+            "id": str(uuid.uuid4()),
             "email": body.get("email"),
             "name": body.get("name"),
             "message": body.get("message")
@@ -51,6 +51,21 @@ def handler(event, context):
             return {
                 "statusCode": 200,
                 "body": json.dumps({"status": "saved", "id": item["id"]})
+            }
+        except Exception as e:
+            return {
+                "statusCode": 500,
+                "body": json.dumps({"error": str(e)})
+            }
+
+    elif route == "/contact" and method == "GET":
+        try:
+            response = table.scan()
+            items = response.get('Items', [])
+            return {
+                "statusCode": 200,
+                "headers": {"Content-Type": "application/json"},
+                "body": json.dumps(items)
             }
         except Exception as e:
             return {
