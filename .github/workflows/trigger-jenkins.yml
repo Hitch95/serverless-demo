@@ -1,4 +1,3 @@
-
 name: Trigger Jenkins
 
 on:
@@ -6,9 +5,26 @@ on:
     branches: main
 
 jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
+      - uses: sonarsource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+      # If we wish to fail our job when the Quality Gate is red, we can uncomment the following lines:
+      # - uses: sonarsource/sonarqube-quality-gate-action@master
+      #   timeout-minutes: 5
+      #   env:
+      #     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
   trigger-jenkins:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger Jenkins build
         run: |
-          curl -X POST http://ip10-0-6-5-cvn3an3hp11h42sqv29g-8080.direct.lab-boris.fr/job/serverless-demo/build --user "admin:11784c09b353cdd23a559fd342cb695ac4" 
+          curl -X POST http://ip10-0-6-5-cvn3an3hp11h42sqv29g-8080.direct.lab-boris.fr/job/serverless-demo/build --user "admin:11784c09b353cdd23a559fd342cb695ac4"
