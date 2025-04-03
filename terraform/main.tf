@@ -29,6 +29,31 @@ resource "aws_iam_role" "lambda_exec" {
   })
 }
 
+resource "aws_iam_policy" "dynamodb_access" {
+  name = "lambda_dynamodb_access"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = [
+          "dynamodb:GetItem",
+          "dynamodb:PutItem",
+          "dynamodb:DeleteItem",
+          "dynamodb:Scan",
+          "dynamodb:Query"
+        ]
+        Effect   = "Allow"
+        Resource = aws_dynamodb_table.contacts.arn
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_dynamodb" {
+  role       = aws_iam_role.lambda_exec.name
+  policy_arn = aws_iam_policy.dynamodb_access.arn
+}
+
 resource "aws_lambda_function" "api" {
   function_name = "hello-api"
   handler       = "handler.handler"
@@ -39,7 +64,8 @@ resource "aws_lambda_function" "api" {
   timeout       = 15
   environment {
     variables = {
-      TABLE_NAME = aws_dynamodb_table.contacts.name
+      TABLE_NAME   = aws_dynamodb_table.contacts.name
+      ENDPOINT_URL = "http://ip10-0-6-4-cvn3an3hp11h42sqv29g-4566.direct.lab-boris.fr"
     }
   }
 }
@@ -120,20 +146,15 @@ resource "aws_api_gateway_integration" "contact_get" {
   uri                     = aws_lambda_function.api.invoke_arn
 }
 
+# Force a new deployment every time
+resource "random_uuid" "deployment_hash" {}
+
 resource "aws_api_gateway_deployment" "deployment" {
   rest_api_id = aws_api_gateway_rest_api.api.id
 
   triggers = {
-    redeployment = sha1(jsonencode([
-      aws_api_gateway_resource.hello.id,
-      aws_api_gateway_resource.contact.id,
-      aws_api_gateway_method.hello.id,
-      aws_api_gateway_method.contact_post.id,
-      aws_api_gateway_method.contact_get.id,
-      aws_api_gateway_integration.hello.id,
-      aws_api_gateway_integration.contact_post.id,
-      aws_api_gateway_integration.contact_get.id
-    ]))
+    # Add a random UUID to force deployment every time
+    redeployment = random_uuid.deployment_hash.result
   }
 
   lifecycle {
@@ -141,6 +162,9 @@ resource "aws_api_gateway_deployment" "deployment" {
   }
 
   depends_on = [
+    aws_api_gateway_method.hello,
+    aws_api_gateway_method.contact_post,
+    aws_api_gateway_method.contact_get,
     aws_api_gateway_integration.hello,
     aws_api_gateway_integration.contact_post,
     aws_api_gateway_integration.contact_get
