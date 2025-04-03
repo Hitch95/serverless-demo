@@ -1,154 +1,141 @@
-import json
-import boto3
-import os
-import uuid
-from decimal import Decimal # Import Decimal for DynamoDB item serialization
+provider "aws" {
+  region                      = "us-east-1"
+  access_key                  = "test"
+  secret_key                  = "test"
+  token                       = ""
+  skip_credentials_validation = true
+  skip_metadata_api_check     = true
+  skip_requesting_account_id  = true
 
-# Helper function to handle Decimal types for JSON serialization
-class DecimalEncoder(json.JSONEncoder):
-    def default(self, o):
-        if isinstance(o, Decimal):
-            # Convert Decimal to float or int
-            if o % 1 > 0:
-                return float(o)
-            else:
-                return int(o)
-        return super(DecimalEncoder, self).default(o)
+  endpoints {
+    lambda     = "http://ip10-0-6-4-cvn3an3hp11h42sqv29g-4566.direct.lab-boris.fr"
+    apigateway = "http://ip10-0-6-4-cvn3an3hp11h42sqv29g-4566.direct.lab-boris.fr"
+    iam        = "http://ip10-0-6-4-cvn3an3hp11h42sqv29g-4566.direct.lab-boris.fr"
+    dynamodb   = "http://ip10-0-6-4-cvn3an3hp11h42sqv29g-4566.direct.lab-boris.fr"
+  }
+}
 
-def handler(event, context):
-    print("EVENT DEBUG:", json.dumps(event)) # Keep for debugging if needed
+resource "aws_iam_role" "lambda_exec" {
+  name = "lambda_exec_role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = {
+        Service = "lambda.amazonaws.com"
+      }
+    }]
+  })
+}
 
-    table_name = os.environ.get("TABLE_NAME")
-    # Important: Make sure ENDPOINT_URL is passed from Terraform
-    endpoint_url = os.environ.get("ENDPOINT_URL") 
-
-    if not table_name:
-        return {
-            "statusCode": 500,
-            "body": json.dumps({"error": "TABLE_NAME environment variable not set"})
-        }
-    
-    # If endpoint_url is not explicitly set for local dev/testing, boto3 uses default AWS endpoints
-    # For LocalStack, it MUST be provided.
-    dynamodb_args = {
-        'region_name': 'us-east-1', # Or your desired region
-        'aws_access_key_id': 'test',  # Only needed for specific localstack setups, often optional
-        'aws_secret_access_key': 'test' # Only needed for specific localstack setups, often optional
+resource "aws_lambda_function" "api" {
+  function_name = "hello-api"
+  handler       = "handler.handler"
+  runtime       = "python3.9"
+  role          = aws_iam_role.lambda_exec.arn
+  filename      = "lambda.zip"
+  source_code_hash = filebase64sha256("lambda.zip")
+  timeout       = 15
+  environment {
+    variables = {
+      TABLE_NAME = aws_dynamodb_table.contacts.name
     }
-    if endpoint_url:
-        dynamodb_args['endpoint_url'] = endpoint_url
-        print(f"DEBUG: Connecting to DynamoDB endpoint: {endpoint_url}")
-    else:
-        print("DEBUG: ENDPOINT_URL not set, connecting to default AWS DynamoDB endpoint.")
+  }
+}
 
+resource "aws_dynamodb_table" "contacts" {
+  name         = "contacts"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "id"
 
-    try:
-        dynamodb = boto3.resource('dynamodb', **dynamodb_args)
-        table = dynamodb.Table(table_name)
-    except Exception as e:
-         print(f"ERROR: Could not connect to DynamoDB. {str(e)}")
-         return {
-            "statusCode": 500,
-            "body": json.dumps({"error": f"Failed to connect to DynamoDB: {str(e)}"})
-        }
+  attribute {
+    name = "id"
+    type = "S"
+  }
+}
 
+resource "aws_api_gateway_rest_api" "api" {
+  name        = "hello-api"
+  description = "API REST simulée"
+}
 
-    # Normalize path and method extraction for different API Gateway payload versions
-    route = event.get("rawPath") # HTTP API payload v2.0
-    if route is None:
-        route = event.get("path") # REST API or HTTP API payload v1.0
-    
-    method = event.get("requestContext", {}).get("http", {}).get("method") # HTTP API payload v2.0
-    if method is None:
-         method = event.get("httpMethod") # REST API or HTTP API payload v1.0
+resource "aws_api_gateway_resource" "hello" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_rest_api.api.root_resource_id
+  path_part   = "hello"
+}
 
-    if not route or not method:
-         return {
-            "statusCode": 400,
-            "body": json.dumps({"error": "Could not determine route or method from event"})
-        }
+resource "aws_api_gateway_resource" "contact" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
+  parent_id   = aws_api_gateway_rest_api.api.root_resource_id
+  path_part   = "contact"
+}
 
-    print(f"DEBUG: Received request: Method={method}, Route={route}")
+resource "aws_api_gateway_method" "hello" {
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+  resource_id   = aws_api_gateway_resource.hello.id
+  http_method   = "ANY"
+  authorization = "NONE"
+}
 
-    # --- Route Handlers ---
+resource "aws_api_gateway_method" "contact_post" {
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+  resource_id   = aws_api_gateway_resource.contact.id
+  http_method   = "POST"
+  authorization = "NONE"
+}
 
-    if route == "/hello" and method == "GET":
-        return {
-            "statusCode": 200,
-            "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"message": "Hello from Lambda!"})
-        }
+resource "aws_api_gateway_method" "contact_get" {
+  rest_api_id   = aws_api_gateway_rest_api.api.id
+  resource_id   = aws_api_gateway_resource.contact.id
+  http_method   = "GET"
+  authorization = "NONE"
+}
 
-    elif route == "/contact" and method == "POST":
-        try:
-            body = json.loads(event.get("body", "{}"))
-            # Basic validation
-            if not body.get("email") or not body.get("name") or not body.get("message"):
-                 return {
-                    "statusCode": 400,
-                    "body": json.dumps({"error": "Missing required fields: email, name, message"})
-                }
+resource "aws_api_gateway_integration" "hello" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.hello.id
+  http_method             = aws_api_gateway_method.hello.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.api.invoke_arn
+}
 
-            item = {
-                "id": str(uuid.uuid4()),
-                "email": body.get("email"),
-                "name": body.get("name"),
-                "message": body.get("message")
-                # Add other fields as needed, ensure they match DynamoDB schema if strict
-            }
+resource "aws_api_gateway_integration" "contact_post" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.contact.id
+  http_method             = aws_api_gateway_method.contact_post.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.api.invoke_arn
+}
 
-            table.put_item(Item=item)
-            print(f"DEBUG: Saved contact item with ID: {item['id']}")
-            return {
-                "statusCode": 201, # Use 201 Created for new resources
-                "headers": {"Content-Type": "application/json"},
-                "body": json.dumps({"status": "saved", "id": item["id"]})
-            }
-        except json.JSONDecodeError:
-             return {
-                "statusCode": 400,
-                "body": json.dumps({"error": "Invalid JSON body"})
-            }
-        except Exception as e:
-            print(f"ERROR: Failed to save contact item. {str(e)}")
-            return {
-                "statusCode": 500,
-                "body": json.dumps({"error": f"Failed to save contact: {str(e)}"})
-            }
+resource "aws_api_gateway_integration" "contact_get" {
+  rest_api_id             = aws_api_gateway_rest_api.api.id
+  resource_id             = aws_api_gateway_resource.contact.id
+  http_method             = aws_api_gateway_method.contact_get.http_method
+  integration_http_method = "POST"
+  type                    = "AWS_PROXY"
+  uri                     = aws_lambda_function.api.invoke_arn
+}
 
-    # --- NEW: Handler for GET /contact ---
-    elif route == "/contact" and method == "GET":
-        try:
-            # Scan operation can be expensive on large tables in real AWS
-            # For smaller datasets or local testing, it's okay.
-            response = table.scan()
-            items = response.get('Items', [])
-            
-            # Handle potential pagination if needed in the future
-            while 'LastEvaluatedKey' in response:
-                response = table.scan(ExclusiveStartKey=response['LastEvaluatedKey'])
-                items.extend(response.get('Items', []))
+resource "aws_api_gateway_deployment" "deployment" {
+  rest_api_id = aws_api_gateway_rest_api.api.id
 
-            print(f"DEBUG: Retrieved {len(items)} contact items.")
-            return {
-                "statusCode": 200,
-                "headers": {"Content-Type": "application/json"},
-                # Use the custom encoder to handle Decimals from DynamoDB
-                "body": json.dumps(items, cls=DecimalEncoder) 
-            }
-        except Exception as e:
-            print(f"ERROR: Failed to retrieve contact items. {str(e)}")
-            return {
-                "statusCode": 500,
-                "body": json.dumps({"error": f"Failed to retrieve contacts: {str(e)}"})
-            }
+  triggers = {
+    redeployment = sha1(jsonencode([
+      aws_api_gateway_resource.hello.id,
+      aws_api_gateway_resource.contact.id,
+      aws_api_gateway_method.hello.id,
+      aws_api_gateway_method.contact_post.id,
+      aws_api_gateway_method.contact_get.id,
+      aws_api_gateway_integration.hello.id,
+      aws_api_gateway_integration.contact_post.id,
+      aws_api_gateway_integration.contact_get.id
+    ]))
+  }
 
-    # --- Default Fallback ---
-    else:
-        print(f"DEBUG: Route/Method not found: Method={method}, Route={route}")
-        return {
-            "statusCode": 404,
-            "headers": {"Content-Type": "application/json"},
-            "body": json.dumps({"error": "Route not found", "requested_path": route, "requested_method": method})
-        }
-
+  lifecycle {
+    create_before_destroy = true
+  }
